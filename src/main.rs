@@ -1,6 +1,22 @@
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+pub enum AddressingMode {
+    Immediate,
+    ZeroPage,
+    ZeroPage_X,
+    ZeroPage_Y,
+    Absolute,
+    Absolute_X,
+    Absolute_Y,
+    Indirect_X,
+    Indirect_Y,
+    NoneAddressing,
+}
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
+    pub register_y: u8,
     pub status: u8,
     pub pc: u16,
     memory: [u8; 0xFFFF],
@@ -11,6 +27,7 @@ impl CPU {
         CPU {
             register_a: 0,
             register_x: 0,
+            register_y: 0,
             status: 0,
             pc: 0,
             memory: [0; 0xFFFF],
@@ -28,10 +45,18 @@ impl CPU {
         self.pc = self.mem_read_u16(0xFFFC);
     }
 
-    fn lda(&mut self, value: u8) {
+    fn lda(&mut self, mode: AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
         self.register_a = value;
         self.update_zero_flag(self.register_a);
         self.update_negative_flag(self.register_a);
+    }
+
+    fn sta(&mut self, mode: AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_a);
     }
 
     fn tax(&mut self) {
@@ -44,6 +69,18 @@ impl CPU {
         self.register_x = self.register_x.wrapping_add(1);
         self.update_zero_flag(self.register_x);
         self.update_negative_flag(self.register_x);
+    }
+
+    fn iny(&mut self) {
+        self.register_y = self.register_y.wrapping_add(1);
+        self.update_zero_flag(self.register_y);
+        self.update_negative_flag(self.register_y);
+    }
+
+    fn tay(&mut self) {
+        self.register_y = self.register_a;
+        self.update_zero_flag(self.register_y);
+        self.update_negative_flag(self.register_y);
     }
 
     fn update_zero_flag(&mut self, result: u8) {
@@ -59,6 +96,49 @@ impl CPU {
             self.status = self.status | 0b1000_0000;
         } else {
             self.status = self.status & 0b0111_1111;
+        }
+    }
+
+    fn get_operand_address(&self, mode: AddressingMode) -> u16 {
+        match mode {
+            AddressingMode::Immediate => self.pc,
+            AddressingMode::ZeroPage => self.mem_read(self.pc) as u16,
+            AddressingMode::Absolute => self.mem_read_u16(self.pc),
+            AddressingMode::ZeroPage_X => {
+                let pos = self.mem_read(self.pc);
+                let addr = pos.wrapping_add(self.register_x) as u16;
+                addr
+            }
+            AddressingMode::ZeroPage_Y => {
+                let pos = self.mem_read(self.pc);
+                let addr = pos.wrapping_add(self.register_y) as u16;
+                addr
+            }
+            AddressingMode::Absolute_X => {
+                let base = self.mem_read_u16(self.pc);
+                let addr = base.wrapping_add(self.register_x as u16);
+                addr
+            }
+            AddressingMode::Absolute_Y => {
+                let base = self.mem_read_u16(self.pc);
+                let addr = base.wrapping_add(self.register_y as u16);
+                addr
+            }
+            AddressingMode::Indirect_X => {
+                let base = self.mem_read(self.pc);
+                let ptr = base.wrapping_add(self.register_x);
+                let addr = self.mem_read_u16(ptr as u16);
+                addr
+            }
+            AddressingMode::Indirect_Y => {
+                let base = self.mem_read(self.pc);
+                let deref_base = self.mem_read_u16(base as u16);
+                let deref = deref_base.wrapping_add(self.register_y as u16);
+                deref
+            }
+            AddressingMode::NoneAddressing => {
+                panic!("mode {:?} is not supported", mode);
+            }
         }
     }
 
@@ -104,13 +184,74 @@ impl CPU {
             self.pc += 1;
 
             match opscode {
+                // LDA
                 0xA9 => {
-                    let param = self.mem_read(self.pc);
+                    self.lda(AddressingMode::Immediate);
                     self.pc += 1;
-                    self.lda(param);
                 }
+                0xA5 => {
+                    self.lda(AddressingMode::ZeroPage);
+                    self.pc += 1;
+                }
+                0xB5 => {
+                    self.lda(AddressingMode::ZeroPage_X);
+                    self.pc += 1;
+                }
+                0xAD => {
+                    self.lda(AddressingMode::Absolute);
+                    self.pc += 2;
+                }
+                0xBD => {
+                    self.lda(AddressingMode::Absolute_X);
+                    self.pc += 2;
+                }
+                0xB9 => {
+                    self.lda(AddressingMode::Absolute_Y);
+                    self.pc += 2;
+                }
+                0xA1 => {
+                    self.lda(AddressingMode::Indirect_X);
+                    self.pc += 1;
+                }
+                0xB1 => {
+                    self.lda(AddressingMode::Indirect_Y);
+                    self.pc += 1;
+                }
+
+                // STA
+                0x85 => {
+                    self.sta(AddressingMode::ZeroPage);
+                    self.pc += 1;
+                }
+                0x95 => {
+                    self.sta(AddressingMode::ZeroPage_X);
+                    self.pc += 1;
+                }
+                0x8D => {
+                    self.sta(AddressingMode::Absolute);
+                    self.pc += 2;
+                }
+                0x9D => {
+                    self.sta(AddressingMode::Absolute_X);
+                    self.pc += 2;
+                }
+                0x99 => {
+                    self.sta(AddressingMode::Absolute_Y);
+                    self.pc += 2;
+                }
+                0x81 => {
+                    self.sta(AddressingMode::Indirect_X);
+                    self.pc += 1;
+                }
+                0x91 => {
+                    self.sta(AddressingMode::Indirect_Y);
+                    self.pc += 1;
+                }
+
                 0xAA => self.tax(),
+                0xA8 => self.tay(),
                 0xE8 => self.inx(),
+                0xC8 => self.iny(),
                 0x00 => return,
                 _ => todo!(),
             }
@@ -147,6 +288,14 @@ mod test {
     }
 
     #[test]
+    fn test_0xa8_tay_move_a_to_y() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0x0a, 0xa8, 0x00]);
+
+        assert_eq!(cpu.register_y, 0x0a)
+    }
+
+    #[test]
     fn test_5_ops_working_together() {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0xc0, 0xaa, 0xe8, 0x00]);
@@ -158,6 +307,103 @@ mod test {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0xff, 0xaa, 0xe8, 0xe8, 0x00]);
         assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_iny_overflow() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0xff, 0xa8, 0xc8, 0xc8, 0x00]);
+        assert_eq!(cpu.register_y, 1)
+    }
+
+    #[test]
+    fn test_lda_from_memory() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x55);
+
+        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
+
+        assert_eq!(cpu.register_a, 0x55);
+    }
+
+    #[test]
+    fn test_lda_indirect_x() {
+        // Runs this program:
+        // LDX #$01
+        // LDA #$05
+        // STA $01
+        // LDA #$07
+        // STA $02
+        // LDY #$0a
+        // STY $0705
+        // LDA ($00,X)
+
+        let mut cpu = CPU::new();
+
+        // LDA #$05
+        // STA $01
+        cpu.mem_write(0x01, 0x05);
+
+        // LDA #$07
+        // STA $02
+        cpu.mem_write(0x02, 0x07);
+
+        // LDY #$0a
+        // STY $0705
+        cpu.mem_write(0x0705, 0x0a);
+
+        //                    LDA  #$0x01 TAX   LDA ($00, X) BRK
+        cpu.load_and_run(vec![0xa9, 0x01, 0xaa, 0xa1, 0x00, 0x00]);
+
+        assert_eq!(cpu.register_a, 0x0a);
+    }
+
+    #[test]
+    fn test_lda_indirect_y() {
+        // Runs this program:
+        // LDY #$01
+        // LDA #$03
+        // STA $01
+        // LDA #$07
+        // STA $02
+        // LDX #$0a
+        // STX $0704
+        // LDA ($01),Y
+
+        let mut cpu = CPU::new();
+
+        // LDA #$03
+        // STA $01
+        cpu.mem_write(0x01, 0x03);
+
+        // LDA #$07
+        // STA $02
+        cpu.mem_write(0x02, 0x07);
+
+        // LDX #$0a
+        // STX $0704
+        cpu.mem_write(0x0704, 0x0a);
+
+        //                    LDA  #$0x01 TAY   LDA ($01),Y BRK
+        cpu.load_and_run(vec![0xa9, 0x01, 0xa8, 0xb1, 0x01, 0x00]);
+
+        assert_eq!(cpu.register_a, 0x0a);
+    }
+
+    #[test]
+    fn test_sta_zeropage_x() {
+        // LDX #$01   ;X is $01
+        // LDA #$aa   ;A is $aa
+        // STA $a0,X ;Store the value of A at memory location $a1
+        // INX        ;Increment X
+        // STA $a0,X ;Store the value of A at memory location $a2
+        let mut cpu = CPU::new();
+
+        cpu.load_and_run(vec![
+            0xa9, 0x01, 0xaa, 0xa9, 0xaa, 0x95, 0xa0, 0xe8, 0x95, 0xa0, 0x00,
+        ]);
+
+        assert_eq!(cpu.mem_read_u16(0xa1), 0xaaaa)
     }
 }
 
